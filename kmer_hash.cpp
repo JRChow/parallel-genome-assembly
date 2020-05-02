@@ -7,6 +7,7 @@
 #include <set>
 #include <upcxx/upcxx.hpp>
 #include <vector>
+//#include <stdio.h>
 
 #include "hash_map.hpp"
 #include "kmer_t.hpp"
@@ -96,17 +97,29 @@ int main(int argc, char** argv) {
         contigs.push_back(contig);
     }
 
+    // DEBUG
+//    BUtil::print("Rank %d / %d done!\n", upcxx::rank_me(), upcxx::rank_n() - 1);
+
     auto end_read = std::chrono::high_resolution_clock::now();
     upcxx::barrier();
     auto end = std::chrono::high_resolution_clock::now();
+
+    // DEBUG
+//    BUtil::print("Rank %d / %d passed final barrier!\n", upcxx::rank_me(), upcxx::rank_n() - 1);
 
     std::chrono::duration<double> read = end_read - start_read;
     std::chrono::duration<double> insert = end_insert - start;
     std::chrono::duration<double> total = end - start;
 
+    // DEBUG
+//    BUtil::print("Rank %d / %d accumulating...\n", upcxx::rank_me(), upcxx::rank_n() - 1);
+
     int numKmers = std::accumulate(
         contigs.begin(), contigs.end(), 0,
         [](int sum, const std::list<kmer_pair>& contig) { return sum + contig.size(); });
+
+    // DEBUG
+//    BUtil::print("Rank %d / %d accumulate() done!\n", upcxx::rank_me(), upcxx::rank_n() - 1);
 
     if (run_type != "test") {
         BUtil::print("Assembled in %lf total\n", total.count());
@@ -126,6 +139,9 @@ int main(int argc, char** argv) {
         }
         fout.close();
     }
+
+    // DEBUG
+//    BUtil::print("Rank %d / %d reached finalize()!\n", upcxx::rank_me(), upcxx::rank_n() - 1);
 
     upcxx::finalize();
     return 0;
