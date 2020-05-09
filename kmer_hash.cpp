@@ -82,22 +82,37 @@ int main(int argc, char** argv) {
 
     auto start_read = std::chrono::high_resolution_clock::now();
 
+    // DEBUG
+//    fprintf(stderr, "Rank %d: finding using %d start nodes...\n", upcxx::rank_me(), start_nodes.size());
+//    BUtil::print("Finding using %d start nodes...\n", start_nodes.size());
+
     std::list<std::list<kmer_pair>> contigs;
     for (const auto& start_kmer : start_nodes) {
         std::list<kmer_pair> contig;
         contig.push_back(start_kmer);
         while (contig.back().forwardExt() != 'F') {
             kmer_pair kmer;
+//            fprintf(stderr, "Rank %d finding %s...\n", upcxx::rank_me(), contig.back().next_kmer().get().c_str());
             bool success = hashmap.find(contig.back().next_kmer(), kmer);
+//            fprintf(stderr, "Rank %d found!\n", upcxx::rank_me());
             if (!success) {
                 throw std::runtime_error("Error: k-mer not found in hashmap.");
             }
             contig.push_back(kmer);
+
+            // DEBUG
+
+//            fprintf(stderr, "Rank %d finding，last fwdExt = %c\n", upcxx::rank_me(), contig.back().forwardExt());
         }
+        // DEBUG
+//        fprintf(stderr, "Rank %d pushing a contig...\n", upcxx::rank_me());
+
         contigs.push_back(contig);
     }
 
     // DEBUG
+//    upcxx::barrier();
+//    fprintf(stderr, "Rank %d / %d done!\n", upcxx::rank_me(), upcxx::rank_n());
 //    BUtil::print("Rank %d / %d done!\n", upcxx::rank_me(), upcxx::rank_n() - 1);
 
     auto end_read = std::chrono::high_resolution_clock::now();
@@ -105,6 +120,7 @@ int main(int argc, char** argv) {
     auto end = std::chrono::high_resolution_clock::now();
 
     // DEBUG
+//    fprintf(stderr, "Rank %d / %d passed final barrier!\n", upcxx::rank_me(), upcxx::rank_n() - 1);
 //    BUtil::print("Rank %d / %d passed final barrier!\n", upcxx::rank_me(), upcxx::rank_n() - 1);
 
     std::chrono::duration<double> read = end_read - start_read;
@@ -141,6 +157,8 @@ int main(int argc, char** argv) {
     }
 
     // DEBUG
+//    upcxx::barrier();
+//    fprintf(stderr, "Rank %d / %d reached finalize()!\n", upcxx::rank_me(), upcxx::rank_n() - 1);
 //    BUtil::print("Rank %d / %d reached finalize()!\n", upcxx::rank_me(), upcxx::rank_n() - 1);
 
     upcxx::finalize();

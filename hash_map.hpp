@@ -19,10 +19,14 @@ struct HashMap {
      * point to arrays allocated in the shared segment on each rank. */
     std::vector<upcxx::global_ptr<kmer_pair>> global_map_ptrs;
     std::vector<upcxx::global_ptr<int>> is_occupied_slots;
+//    upcxx::atomic_domain<int> cas({upcxx::atomic_op::compare_exchange});
+    upcxx::atomic_domain<int> dom = upcxx::atomic_domain<int>({upcxx::atomic_op::compare_exchange,
+                                                               upcxx::atomic_op::load});
 
     size_t size() const noexcept;  // Getter for my_size
 
     HashMap(size_t global_hashmap_size);  // Constructor
+    ~HashMap();  // Destructor
 
     // Most important functions: insert and retrieve
     // k-mers from the hash table.
@@ -30,8 +34,9 @@ struct HashMap {
     bool find(const pkmer_t& key_kmer, kmer_pair& val_kmer);
 
     // TODO: helper functions
-    uint64_t hash_to_global_slot(uint64_t hash);
-    bool check_slot_available(uint64_t slot);
+//    upcxx::atomic_domain<int> make_atomic_domain();
+//    uint64_t hash_to_global_slot(uint64_t hash);
+//    bool check_slot_available(uint64_t slot);
 
     // Write and read to a logical data slot in the table.
     void write_slot(uint64_t slot, const kmer_pair& kmer);
@@ -72,6 +77,12 @@ HashMap::HashMap(size_t global_hashmap_size) {
   global_map_ptrs = std::vector<upcxx::global_ptr<kmer_pair>>(num_proc);
   is_occupied_slots = std::vector<upcxx::global_ptr<int>>(num_proc);
 
+
+  //  upcxx::atomic_domain<int> cas
+//  this->dom = make_atomic_domain();
+//  this->cas({upcxx::atomic_op::compare_exchange});
+//  this->cas_ptr = &upcxx::atomic_domain<int>({upcxx::atomic_op::compare_exchange});
+
   // FIXME: do we really need a barrier here?
   upcxx::barrier();
 
@@ -88,18 +99,23 @@ HashMap::HashMap(size_t global_hashmap_size) {
   upcxx::barrier();
 }
 
+// [Jingran] Destructor
+HashMap::~HashMap() {
+    this->dom.destroy();
+}
+
 // [Daniel]
 bool HashMap::insert(const kmer_pair& kmer) {  // TODO
   // Compute the global slot
   uint64_t g_slot = kmer.hash() % global_hashmap_size;
   uint64_t initial_g_slot = g_slot;
 
-  upcxx::atomic_domain<int> cas({upcxx::atomic_op::compare_exchange});
-
   upcxx::global_ptr<int> slot_ptr = is_occupied_slots[g_slot / offset] + (g_slot % offset);
 
-  while(cas.compare_exchange(slot_ptr, 0, 1, std::memory_order_relaxed).wait() != 0) {
+  while(dom.compare_exchange(slot_ptr, 0, 1, std::memory_order_relaxed).wait() != 0) {
+
     g_slot = (g_slot+1) % global_hashmap_size;
+
     slot_ptr = is_occupied_slots[g_slot / offset] + (g_slot % offset);
 
     if (initial_g_slot == g_slot) {
@@ -107,11 +123,9 @@ bool HashMap::insert(const kmer_pair& kmer) {  // TODO
     }
   }
 
-  cas.destroy();
-
   upcxx::rput(kmer, global_map_ptrs[g_slot / offset] + (g_slot % offset)).wait();
 
-  // DEBUG
+//   DEBUG
 //  printf("%s inserted at g_slot %lld (map %d, l_slot %lld)", kmer.kmer.get().c_str(), g_slot, g_slot / offset, g_slot % offset);
 //  kmer_pair just_inserted = upcxx::rget(global_map_ptrs[g_slot / offset] + (g_slot % offset)).wait();
 //  assert(just_inserted == kmer);
@@ -127,24 +141,33 @@ bool HashMap::insert(const kmer_pair& kmer) {  // TODO
 bool HashMap::find(const pkmer_t& key_kmer, kmer_pair& val_kmer) {  // TODO
   uint64_t g_slot = key_kmer.hash() % global_hashmap_size;  // Global slot
   uint64_t initial_g_slot = g_slot;
+
   do {
     // Retrieve element from global hashmap
     int which_proc = g_slot / offset;
     uint64_t l_slot = g_slot % offset;  // Local slot
-    // FIXME: probably don't need lock if we separate inserts from finds?
     kmer_pair item = upcxx::rget(global_map_ptrs[which_proc] + l_slot).wait();
-    int slot_used = upcxx::rget(is_occupied_slots[which_proc] + l_slot).wait();
-//    printf("find(%s): g_slot %lld (map %d, l_slot %lld) -> %s\n", key_kmer.get().c_str(), g_slot, which_proc, l_slot, item.kmer.get().c_str());
+    int slot_used = dom.load(is_occupied_slots[which_proc] + l_slot, std::memory_order_relaxed).wait();
+//    fprintf(stderr, "find(%s): g_slot %lld (map %d, l_slot %lld) -> %s\n", key_kmer.get().c_str(), g_slot, which_proc, l_slot, item.kmer.get().c_str());
+    if (slot_used == 0) {
+        break;
+    }
     // If keys match, we've found our target
-    if (slot_used == 1 && item.kmer == key_kmer) {
-//        printf("key %s found at g_slot %lld :)\n", key_kmer.get().c_str(), g_slot);
+    if (item.kmer == key_kmer) {
+        // DEBUG
+//        if (my_rank == 0)
+//            fprintf(stderr, "key %s found at g_slot %lld :)\n", key_kmer.get().c_str(), g_slot);
+
         val_kmer = item;
         return true;
     }
     g_slot = (g_slot + 1) % global_hashmap_size;  // Linear probing
   } while (g_slot != initial_g_slot);
 
-//  printf(":( key %s NOT found since g_slot %lld\n", key_kmer.get().c_str(), initial_g_slot);
+  // DEBUG
+//  if (my_rank == 0)
+//    fprintf(stderr, ":( key %s NOT found since g_slot %lld\n", key_kmer.get().c_str(), initial_g_slot);
+
   return false;
 }
 
@@ -197,3 +220,10 @@ bool HashMap::find(const pkmer_t& key_kmer, kmer_pair& val_kmer) {  // TODO
 //   int which_proc = hash / this.offset;
 //   uint64_t l_slot = hash % this.offset;  // Local slot
 // }
+
+//
+//upcxx::atomic_domain<int> HashMap::make_atomic_domain() {
+//    upcxx::atomic_domain<int> dom({upcxx::atomic_op::load,
+//                                   upcxx::atomic_op::compare_exchange});
+//    return dom;
+//}
