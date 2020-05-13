@@ -5,7 +5,6 @@
 #include "butil.hpp"
 
 struct HashMap {
-    // std::vector<int> used;
     size_t global_hashmap_size;  // Total number of entries in global hash map
     size_t offset;   // Number of entries between every two processes
     size_t my_base;  // Number of entries before me belonging to other processes
