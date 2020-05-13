@@ -7,7 +7,6 @@
 #include <set>
 #include <upcxx/upcxx.hpp>
 #include <vector>
-//#include <stdio.h>
 
 #include "hash_map.hpp"
 #include "kmer_t.hpp"
@@ -15,7 +14,7 @@
 
 #include "butil.hpp"
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
     upcxx::init();
 
     if (argc < 2) {
@@ -51,7 +50,7 @@ int main(int argc, char** argv) {
                      n_kmers);
     }
 
-    std::vector<kmer_pair> kmers = read_kmers(kmer_fname, upcxx::rank_n(), upcxx::rank_me());
+    std::vector <kmer_pair> kmers = read_kmers(kmer_fname, upcxx::rank_n(), upcxx::rank_me());
 
     if (run_type == "verbose") {
         BUtil::print("Finished reading kmers.\n");
@@ -59,9 +58,9 @@ int main(int argc, char** argv) {
 
     auto start = std::chrono::high_resolution_clock::now();
 
-    std::vector<kmer_pair> start_nodes;
+    std::vector <kmer_pair> start_nodes;
 
-    for (auto& kmer : kmers) {
+    for (auto &kmer : kmers) {
         bool success = hashmap.insert(kmer);
         if (!success) {
             throw std::runtime_error("Error: HashMap is full!");
@@ -82,60 +81,32 @@ int main(int argc, char** argv) {
 
     auto start_read = std::chrono::high_resolution_clock::now();
 
-    // DEBUG
-//    fprintf(stderr, "Rank %d: finding using %d start nodes...\n", upcxx::rank_me(), start_nodes.size());
-//    BUtil::print("Finding using %d start nodes...\n", start_nodes.size());
-
-    std::list<std::list<kmer_pair>> contigs;
-    for (const auto& start_kmer : start_nodes) {
-        std::list<kmer_pair> contig;
+    std::list <std::list<kmer_pair>> contigs;
+    for (const auto &start_kmer : start_nodes) {
+        std::list <kmer_pair> contig;
         contig.push_back(start_kmer);
         while (contig.back().forwardExt() != 'F') {
             kmer_pair kmer;
-//            fprintf(stderr, "Rank %d finding %s...\n", upcxx::rank_me(), contig.back().next_kmer().get().c_str());
             bool success = hashmap.find(contig.back().next_kmer(), kmer);
-//            fprintf(stderr, "Rank %d found!\n", upcxx::rank_me());
             if (!success) {
                 throw std::runtime_error("Error: k-mer not found in hashmap.");
             }
             contig.push_back(kmer);
-
-            // DEBUG
-
-//            fprintf(stderr, "Rank %d finding，last fwdExt = %c\n", upcxx::rank_me(), contig.back().forwardExt());
         }
-        // DEBUG
-//        fprintf(stderr, "Rank %d pushing a contig...\n", upcxx::rank_me());
-
         contigs.push_back(contig);
     }
-
-    // DEBUG
-//    upcxx::barrier();
-//    fprintf(stderr, "Rank %d / %d done!\n", upcxx::rank_me(), upcxx::rank_n());
-//    BUtil::print("Rank %d / %d done!\n", upcxx::rank_me(), upcxx::rank_n() - 1);
 
     auto end_read = std::chrono::high_resolution_clock::now();
     upcxx::barrier();
     auto end = std::chrono::high_resolution_clock::now();
 
-    // DEBUG
-//    fprintf(stderr, "Rank %d / %d passed final barrier!\n", upcxx::rank_me(), upcxx::rank_n() - 1);
-//    BUtil::print("Rank %d / %d passed final barrier!\n", upcxx::rank_me(), upcxx::rank_n() - 1);
-
     std::chrono::duration<double> read = end_read - start_read;
     std::chrono::duration<double> insert = end_insert - start;
     std::chrono::duration<double> total = end - start;
 
-    // DEBUG
-//    BUtil::print("Rank %d / %d accumulating...\n", upcxx::rank_me(), upcxx::rank_n() - 1);
-
     int numKmers = std::accumulate(
-        contigs.begin(), contigs.end(), 0,
-        [](int sum, const std::list<kmer_pair>& contig) { return sum + contig.size(); });
-
-    // DEBUG
-//    BUtil::print("Rank %d / %d accumulate() done!\n", upcxx::rank_me(), upcxx::rank_n() - 1);
+            contigs.begin(), contigs.end(), 0,
+            [](int sum, const std::list <kmer_pair> &contig) { return sum + contig.size(); });
 
     if (run_type != "test") {
         BUtil::print("Assembled in %lf total\n", total.count());
@@ -150,16 +121,11 @@ int main(int argc, char** argv) {
 
     if (run_type == "test") {
         std::ofstream fout("test_" + std::to_string(upcxx::rank_me()) + ".dat");
-        for (const auto& contig : contigs) {
+        for (const auto &contig : contigs) {
             fout << extract_contig(contig) << std::endl;
         }
         fout.close();
     }
-
-    // DEBUG
-//    upcxx::barrier();
-//    fprintf(stderr, "Rank %d / %d reached finalize()!\n", upcxx::rank_me(), upcxx::rank_n() - 1);
-//    BUtil::print("Rank %d / %d reached finalize()!\n", upcxx::rank_me(), upcxx::rank_n() - 1);
 
     upcxx::finalize();
     return 0;
