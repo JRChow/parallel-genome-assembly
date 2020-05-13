@@ -63,10 +63,6 @@ HashMap::HashMap(size_t global_hashmap_size) {
     // Prepare vector of global pointers
     global_map_ptrs = std::vector < upcxx::global_ptr < kmer_pair >> (num_proc);
     is_occupied_slots = std::vector < upcxx::global_ptr < int >> (num_proc);
-
-    // FIXME: do we really need a barrier here?
-    upcxx::barrier();
-
     // Each process builds its part of the global hashmap and broadcast to all
     upcxx::global_ptr <kmer_pair> my_part = upcxx::new_array<kmer_pair>(my_size);
     upcxx::global_ptr<int> my_occupancy = upcxx::new_array<int>(my_size);
@@ -75,9 +71,6 @@ HashMap::HashMap(size_t global_hashmap_size) {
         global_map_ptrs[p] = upcxx::broadcast(my_part, p).wait();
         is_occupied_slots[p] = upcxx::broadcast(my_occupancy, p).wait();
     }
-
-    // FIXME: do we really need a barrier here?
-    upcxx::barrier();
 }
 
 // [Jingran] Destructor
